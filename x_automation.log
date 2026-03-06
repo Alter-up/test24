@@ -1,0 +1,55 @@
+2026-03-06 23:41:31,299 - __main__ - INFO - ==================================================
+2026-03-06 23:41:31,299 - __main__ - INFO - Starting X Automation Bot
+2026-03-06 23:41:31,299 - __main__ - INFO - ==================================================
+2026-03-06 23:43:22,932 - __main__ - INFO - ==================================================
+2026-03-06 23:43:22,932 - __main__ - INFO - Starting X Automation Bot
+2026-03-06 23:43:22,932 - __main__ - INFO - ==================================================
+2026-03-06 23:43:51,258 - __main__ - INFO - ==================================================
+2026-03-06 23:43:51,258 - __main__ - INFO - Starting X Automation Bot
+2026-03-06 23:43:51,258 - __main__ - INFO - ==================================================
+2026-03-06 23:44:06,305 - __main__ - INFO - ==================================================
+2026-03-06 23:44:06,305 - __main__ - INFO - Starting X Automation Bot
+2026-03-06 23:44:06,305 - __main__ - INFO - ==================================================
+2026-03-06 23:45:46,691 - __main__ - INFO - ==================================================
+2026-03-06 23:45:46,691 - __main__ - INFO - Starting X Automation Bot
+2026-03-06 23:45:46,691 - __main__ - INFO - ==================================================
+2026-03-06 23:45:48,738 - __main__ - INFO - Database initialized
+2026-03-06 23:45:48,738 - __main__ - INFO - Starting Telegram Bot...
+2026-03-06 23:45:48,739 - __main__ - INFO - Starting API Server...
+2026-03-06 23:45:48,739 - __main__ - INFO - API will be available at: http://127.0.0.1:8000
+2026-03-06 23:45:49,446 - apscheduler.scheduler - INFO - Scheduler started
+2026-03-06 23:45:49,446 - scheduler - INFO - Task scheduler started
+2026-03-06 23:45:49,455 - scheduler - INFO - Loaded 0 automation tasks
+2026-03-06 23:45:49,455 - telegram_bot - INFO - Bot started!
+2026-03-06 23:48:01,294 - __main__ - INFO - ==================================================
+2026-03-06 23:48:01,295 - __main__ - INFO - Starting X Automation Bot
+2026-03-06 23:48:01,295 - __main__ - INFO - ==================================================
+2026-03-06 23:48:01,491 - __main__ - INFO - Database initialized
+2026-03-06 23:48:01,491 - __main__ - INFO - Starting Telegram Bot...
+2026-03-06 23:48:01,491 - __main__ - INFO - Starting API Server...
+2026-03-06 23:48:01,491 - __main__ - INFO - API will be available at: http://127.0.0.1:8000
+2026-03-06 23:48:11,131 - __main__ - INFO - ==================================================
+2026-03-06 23:48:11,131 - __main__ - INFO - Starting X Automation Bot
+2026-03-06 23:48:11,131 - __main__ - INFO - ==================================================
+2026-03-06 23:48:11,263 - __main__ - INFO - Database initialized
+2026-03-06 23:48:11,263 - __main__ - INFO - Starting Telegram Bot...
+2026-03-06 23:48:11,263 - __main__ - INFO - Starting API Server...
+2026-03-06 23:48:11,263 - __main__ - INFO - API will be available at: http://127.0.0.1:8000
+2026-03-06 23:55:29,213 - __main__ - INFO - ==================================================
+2026-03-06 23:55:29,213 - __main__ - INFO - Starting X Automation Bot
+2026-03-06 23:55:29,213 - __main__ - INFO - ==================================================
+2026-03-06 23:55:29,382 - __main__ - INFO - Database initialized
+2026-03-06 23:55:29,382 - __main__ - INFO - Starting Telegram Bot...
+2026-03-06 23:55:29,382 - __main__ - INFO - Starting API Server...
+2026-03-06 23:55:29,382 - __main__ - INFO - API will be available at: http://127.0.0.1:8000
+2026-03-06 23:56:03,253 - __main__ - INFO - ==================================================
+2026-03-06 23:56:03,253 - __main__ - INFO - Starting X Automation Bot
+2026-03-06 23:56:03,253 - __main__ - INFO - ==================================================
+2026-03-06 23:56:03,429 - __main__ - INFO - Database initialized
+2026-03-06 23:56:03,429 - __main__ - INFO - Starting Telegram Bot...
+2026-03-06 23:56:03,429 - __main__ - INFO - Starting API Server...
+2026-03-06 23:56:03,429 - __main__ - INFO - API will be available at: http://127.0.0.1:8000
+2026-03-06 23:56:03,743 - apscheduler.scheduler - INFO - Scheduler started
+2026-03-06 23:56:03,743 - scheduler - INFO - Task scheduler started
+2026-03-06 23:56:03,749 - scheduler - INFO - Loaded 0 automation tasks
+2026-03-06 23:56:03,749 - telegram_bot - INFO - Bot started!

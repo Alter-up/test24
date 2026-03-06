@@ -1,0 +1,466 @@
+"""
+Telegram Bot for X Automation
+Supports 2 users with whitelist
+"""
+import os
+import logging
+import asyncio
+from typing import List
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, 
+    CallbackQueryHandler, ConversationHandler, ContextTypes, filters
+)
+from database import get_db, Account, Proxy, ActionLog, ScheduledPost, AutomationTask, User
+from sqlalchemy.orm import Session
+from x_automation import XAutomation, AIReplyGenerator
+from scheduler import TaskScheduler
+
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# States for conversation
+ADDING_ACCOUNT, ADDING_PROXY, CREATING_POST, SCHEDULING_POST = range(4)
+
+class XBot:
+    def __init__(self):
+        self.token = os.getenv('TELEGRAM_BOT_TOKEN')
+        self.allowed_users = [int(x.strip()) for x in os.getenv('ALLOWED_USERS', '').split(',') if x.strip()]
+        self.openai_key = os.getenv('OPENAI_API_KEY')
+        self.scheduler = TaskScheduler()
+        self.ai_generator = AIReplyGenerator(self.openai_key) if self.openai_key else None
+        
+    def check_auth(self, user_id: int) -> bool:
+        """Check if user is authorized"""
+        return user_id in self.allowed_users
+    
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Start command"""
+        user_id = update.effective_user.id
+        
+        if not self.check_auth(user_id):
+            await update.message.reply_text("⛔ Access denied. Contact admin to get access.")
+            return
+        
+        # Register/update user in DB
+        db = next(get_db())
+        user = db.query(User).filter_by(telegram_id=user_id).first()
+        if not user:
+            user = User(
+                telegram_id=user_id,
+                username=update.effective_user.username,
+                is_admin=True  # First user is admin
+            )
+            db.add(user)
+            db.commit()
+        
+        welcome_text = """
+🚀 **Welcome to X Automation Bot!**
+
+This bot helps you automate X (Twitter) actions:
+• 👤 Manage multiple accounts
+• 🌐 Use proxies for each account  
+• ❤️ Auto-like, 🔁 retweet, 💬 reply
+• 👤 Auto-follow users
+• 📝 Schedule posts with images
+• 🤖 AI-generated replies
+• 📊 Automation workflows
+
+**Main Commands:**
+/accounts - Manage X accounts
+/proxies - Manage proxies
+/actions - Run actions (like, follow, etc.)
+/posts - Create & schedule posts
+/automation - Set up auto workflows
+/status - View active automations
+/logs - View action history
+/help - Full command list
+        """
+        
+        keyboard = [
+            [InlineKeyboardButton("👤 Accounts", callback_data='menu_accounts'),
+             InlineKeyboardButton("🌐 Proxies", callback_data='menu_proxies')],
+            [InlineKeyboardButton("⚡ Actions", callback_data='menu_actions'),
+             InlineKeyboardButton("📝 Posts", callback_data='menu_posts')],
+            [InlineKeyboardButton("🤖 Automation", callback_data='menu_automation'),
+             InlineKeyboardButton("📊 Status", callback_data='menu_status')],
+        ]
+        
+        await update.message.reply_text(
+            welcome_text, 
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+    
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Help command"""
+        help_text = """
+📚 **Full Command List**
+
+**Account Management:**
+/accounts - List all accounts
+/add_account - Add new X account
+/delete_account - Remove account
+/set_proxy - Assign proxy to account
+
+**Proxy Management:**
+/proxies - List all proxies
+/add_proxy - Add new proxy (format: host:port:user:pass)
+/delete_proxy - Remove proxy
+
+**Actions:**
+/like - Like tweets (by URL or search)
+/retweet - Retweet tweets
+/reply - Reply to tweets
+/follow - Follow users
+/boost - Boost post (like + retweet)
+
+**Posts:**
+/post - Create immediate post
+/schedule - Schedule post for later
+/scheduled - View scheduled posts
+
+**Automation:**
+/auto_lists - Auto from lists
+/auto_search - Auto from search
+/auto_post - Auto-posting schedule
+/stop_auto - Stop automation
+
+**Monitoring:**
+/status - Active automations
+/logs - Recent actions
+/stats - Account statistics
+        """
+        await update.message.reply_text(help_text, parse_mode='Markdown')
+    
+    # ============== ACCOUNTS ==============
+    
+    async def accounts(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """List all accounts"""
+        db = next(get_db())
+        accounts = db.query(Account).all()
+        
+        if not accounts:
+            await update.message.reply_text("No accounts found. Use /add_account to add one.")
+            return
+        
+        text = "👤 **Your Accounts:**\n\n"
+        for acc in accounts:
+            proxy_info = f"🌐 {acc.proxy.name}" if acc.proxy else "❌ No proxy"
+            status = "🟢 Active" if acc.is_active else "🔴 Inactive"
+            text += f"**@{acc.username}**\n"
+            text += f"Status: {status} | {proxy_info}\n"
+            text += f"Actions today: {acc.actions_today}/{acc.daily_actions_limit}\n\n"
+        
+        keyboard = [
+            [InlineKeyboardButton("➕ Add Account", callback_data='add_account')],
+            [InlineKeyboardButton("🗑 Delete Account", callback_data='delete_account')],
+        ]
+        
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    async def add_account_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Start adding account"""
+        await update.message.reply_text(
+            "Let's add a new X account.\n\n"
+            "Step 1/3: Enter the X username (without @):"
+        )
+        return ADDING_ACCOUNT
+    
+    async def add_account_username(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Receive username"""
+        context.user_data['new_account'] = {'username': update.message.text.strip()}
+        await update.message.reply_text("Step 2/3: Enter the email associated with the account:")
+        return ADDING_ACCOUNT + 1
+    
+    async def add_account_email(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Receive email"""
+        context.user_data['new_account']['email'] = update.message.text.strip()
+        await update.message.reply_text("Step 3/3: Enter the password:")
+        return ADDING_ACCOUNT + 2
+    
+    async def add_account_password(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Receive password and save account"""
+        data = context.user_data['new_account']
+        data['password'] = update.message.text.strip()
+        
+        db = next(get_db())
+        account = Account(
+            username=data['username'],
+            email=data['email'],
+            password=data['password']
+        )
+        db.add(account)
+        db.commit()
+        
+        await update.message.reply_text(
+            f"✅ Account @{data['username']} added successfully!\n\n"
+            f"You can now:\n"
+            f"• Assign a proxy: /set_proxy\n"
+            f"• Test login: /test_login @{data['username']}"
+        )
+        return ConversationHandler.END
+    
+    # ============== PROXIES ==============
+    
+    async def proxies(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """List all proxies"""
+        db = next(get_db())
+        proxies = db.query(Proxy).all()
+        
+        if not proxies:
+            await update.message.reply_text("No proxies found. Use /add_proxy to add one.")
+            return
+        
+        text = "🌐 **Your Proxies:**\n\n"
+        for proxy in proxies:
+            accounts_count = len(proxy.accounts)
+            status = "🟢 Active" if proxy.is_active else "🔴 Inactive"
+            text += f"**{proxy.name}**\n"
+            text += f"{proxy.host}:{proxy.port}\n"
+            text += f"Status: {status} | Used by {accounts_count} accounts\n\n"
+        
+        await update.message.reply_text(text, parse_mode='Markdown')
+    
+    async def add_proxy_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Start adding proxy"""
+        await update.message.reply_text(
+            "Enter proxy details in format:\n"
+            "`name|host:port:username:password`\n\n"
+            "Example:\n"
+            "`US Proxy|192.168.1.10:1080:myuser:mypass`\n\n"
+            "Or without auth:\n"
+            "`EU Proxy|192.168.1.20:1080`",
+            parse_mode='Markdown'
+        )
+        return ADDING_PROXY
+    
+    async def add_proxy_save(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Save proxy"""
+        try:
+            text = update.message.text.strip()
+            name_part, proxy_part = text.split('|', 1)
+            parts = proxy_part.split(':')
+            
+            proxy = Proxy(name=name_part.strip(), host=parts[0], port=int(parts[1]))
+            if len(parts) >= 4:
+                proxy.username = parts[2]
+                proxy.password = parts[3]
+            
+            db = next(get_db())
+            db.add(proxy)
+            db.commit()
+            
+            await update.message.reply_text(f"✅ Proxy '{name_part.strip()}' added successfully!")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {str(e)}\nPlease check the format and try again.")
+        
+        return ConversationHandler.END
+    
+    # ============== ACTIONS ==============
+    
+    async def like_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Like tweets"""
+        keyboard = [
+            [InlineKeyboardButton("🔗 Like by URL", callback_data='like_url')],
+            [InlineKeyboardButton("🔍 Like from Search", callback_data='like_search')],
+            [InlineKeyboardButton("📋 Like from List", callback_data='like_list')],
+        ]
+        await update.message.reply_text(
+            "❤️ **Like Tweets**\n\nChoose source:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+    
+    async def follow_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Follow users"""
+        await update.message.reply_text(
+            "👤 **Follow Users**\n\n"
+            "Send usernames to follow (one per line or space-separated):\n\n"
+            "Example:\n"
+            "`elonmusk billgates naval`",
+            parse_mode='Markdown'
+        )
+    
+    async def reply_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Reply to tweets"""
+        await update.message.reply_text(
+            "💬 **Reply to Tweets**\n\n"
+            "Format: `tweet_url|your reply message`\n\n"
+            "For AI-generated reply:\n"
+            "`tweet_url|AI: friendly`\n\n"
+            "Examples:\n"
+            "`https://x.com/user/status/123|Great post!`\n"
+            "`https://x.com/user/status/123|AI: enthusiastic`",
+            parse_mode='Markdown'
+        )
+    
+    async def post_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Create post"""
+        await update.message.reply_text(
+            "📝 **Create Post**\n\n"
+            "Send your tweet text. You can also attach an image.\n\n"
+            "For scheduled post, use /schedule instead."
+        )
+    
+    async def handle_post_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle immediate post"""
+        text = update.message.text or update.message.caption or ""
+        photo = update.message.photo
+        
+        # TODO: Implement actual posting with account selection
+        await update.message.reply_text(
+            f"📝 Post received:\n\n{text[:200]}...\n\n"
+            f"Select account to post from:",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("Account 1", callback_data='post_acc_1')],
+                [InlineKeyboardButton("Account 2", callback_data='post_acc_2')],
+            ])
+        )
+    
+    # ============== AUTOMATION ==============
+    
+    async def automation_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Automation menu"""
+        keyboard = [
+            [InlineKeyboardButton("📋 Lists Automation", callback_data='auto_lists')],
+            [InlineKeyboardButton("🔍 Search Automation", callback_data='auto_search')],
+            [InlineKeyboardButton("📝 Auto-Posting", callback_data='auto_post')],
+            [InlineKeyboardButton("⏹ Stop All", callback_data='stop_all')],
+        ]
+        await update.message.reply_text(
+            "🤖 **Automation Workflows**\n\n"
+            "Set up recurring automated actions:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+    
+    async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show active automations"""
+        db = next(get_db())
+        tasks = db.query(AutomationTask).filter_by(is_active=True).all()
+        
+        if not tasks:
+            await update.message.reply_text("📊 No active automations.")
+            return
+        
+        text = "📊 **Active Automations:**\n\n"
+        for task in tasks:
+            next_run = task.next_run.strftime('%H:%M') if task.next_run else 'N/A'
+            text += f"**{task.name}** ({task.task_type})\n"
+            text += f"Next run: {next_run}\n\n"
+        
+        await update.message.reply_text(text, parse_mode='Markdown')
+    
+    async def logs_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show recent logs"""
+        db = next(get_db())
+        logs = db.query(ActionLog).order_by(ActionLog.created_at.desc()).limit(10).all()
+        
+        if not logs:
+            await update.message.reply_text("📋 No actions logged yet.")
+            return
+        
+        text = "📋 **Recent Actions:**\n\n"
+        for log in logs:
+            status = "✅" if log.status == 'success' else "❌"
+            text += f"{status} **{log.action_type.upper()}** - @{log.account.username if log.account else 'unknown'}\n"
+            text += f"   {log.created_at.strftime('%H:%M %d/%m')}\n\n"
+        
+        await update.message.reply_text(text, parse_mode='Markdown')
+    
+    # ============== CALLBACK HANDLERS ==============
+    
+    async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle button callbacks"""
+        query = update.callback_query
+        await query.answer()
+        
+        data = query.data
+        
+        if data == 'menu_accounts':
+            await query.edit_message_text("Use /accounts to manage your X accounts.")
+        elif data == 'menu_proxies':
+            await query.edit_message_text("Use /proxies to manage proxies.")
+        elif data == 'menu_actions':
+            await query.edit_message_text(
+                "⚡ **Actions**\n\n"
+                "/like - Like tweets\n"
+                "/retweet - Retweet\n"
+                "/reply - Reply to tweets\n"
+                "/follow - Follow users\n"
+                "/boost - Boost posts",
+                parse_mode='Markdown'
+            )
+        elif data == 'menu_posts':
+            await query.edit_message_text(
+                "📝 **Posts**\n\n"
+                "/post - Create immediate post\n"
+                "/schedule - Schedule for later\n"
+                "/scheduled - View scheduled posts",
+                parse_mode='Markdown'
+            )
+        elif data == 'menu_automation':
+            await query.edit_message_text("Use /automation to set up workflows.")
+        elif data == 'menu_status':
+            await query.edit_message_text("Use /status to view active automations.")
+    
+    # ============== MAIN ==============
+    
+    def run(self):
+        """Start the bot"""
+        application = Application.builder().token(self.token).build()
+        
+        # Command handlers
+        application.add_handler(CommandHandler('start', self.start))
+        application.add_handler(CommandHandler('help', self.help_command))
+        application.add_handler(CommandHandler('accounts', self.accounts))
+        application.add_handler(CommandHandler('proxies', self.proxies))
+        application.add_handler(CommandHandler('like', self.like_command))
+        application.add_handler(CommandHandler('follow', self.follow_command))
+        application.add_handler(CommandHandler('reply', self.reply_command))
+        application.add_handler(CommandHandler('post', self.post_command))
+        application.add_handler(CommandHandler('automation', self.automation_menu))
+        application.add_handler(CommandHandler('status', self.status_command))
+        application.add_handler(CommandHandler('logs', self.logs_command))
+        
+        # Conversation handlers
+        add_account_conv = ConversationHandler(
+            entry_points=[CommandHandler('add_account', self.add_account_start)],
+            states={
+                ADDING_ACCOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.add_account_username)],
+                ADDING_ACCOUNT + 1: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.add_account_email)],
+                ADDING_ACCOUNT + 2: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.add_account_password)],
+            },
+            fallbacks=[CommandHandler('cancel', lambda u, c: u.message.reply_text('Cancelled.'))],
+        )
+        application.add_handler(add_account_conv)
+        
+        add_proxy_conv = ConversationHandler(
+            entry_points=[CommandHandler('add_proxy', self.add_proxy_start)],
+            states={
+                ADDING_PROXY: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.add_proxy_save)],
+            },
+            fallbacks=[CommandHandler('cancel', lambda u, c: u.message.reply_text('Cancelled.'))],
+        )
+        application.add_handler(add_proxy_conv)
+        
+        # Callback handler
+        application.add_handler(CallbackQueryHandler(self.button_callback))
+        
+        # Message handler for posts
+        application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, self.handle_post_message))
+        
+        # Start scheduler
+        self.scheduler.start()
+        
+        logger.info("Bot started!")
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+
+if __name__ == '__main__':
+    bot = XBot()
+    bot.run()
